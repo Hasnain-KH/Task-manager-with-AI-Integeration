@@ -1,0 +1,22 @@
+Server is running on port 5000
+MongoServerError: bad auth : Authentication failed.
+    at Connection.sendCommand (C:\Users\XPERT TECH\Desktop\E-Commerce-Perfum - Copy\node_modules\mongodb\lib\cmap\connection.js:322:27)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async Connection.command (C:\Users\XPERT TECH\Desktop\E-Commerce-Perfum - Copy\node_modules\mongodb\lib\cmap\connection.js:349:26)
+    at async executeScram (C:\Users\XPERT TECH\Desktop\E-Commerce-Perfum - Copy\node_modules\mongodb\lib\cmap\auth\scram.js:78:22)
+    at async ScramSHA1.auth (C:\Users\XPERT TECH\Desktop\E-Commerce-Perfum - Copy\node_modules\mongodb\lib\cmap\auth\scram.js:38:16)
+    at async performInitialHandshake (C:\Users\XPERT TECH\Desktop\E-Commerce-Perfum - Copy\node_modules\mongodb\lib\cmap\connect.js:110:13)
+    at async connect (C:\Users\XPERT TECH\Desktop\E-Commerce-Perfum - Copy\node_modules\mongodb\lib\cmap\connect.js:28:9) {
+  errorLabelSet: Set(2) { 'HandshakeError', 'ResetPool' },
+  errorResponse: {
+    ok: 0,
+    errmsg: 'bad auth : Authentication failed.',
+    code: 8000,
+    codeName: 'AtlasError'
+  },
+  ok: 0,
+  code: 8000,
+  codeName: 'AtlasError',
+  connectionGeneration: 0
+}
+Database connection failed
