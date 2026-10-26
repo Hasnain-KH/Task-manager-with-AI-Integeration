@@ -92,3 +92,15 @@ test("AI planner validates missing bodies and oversized descriptions before maki
         assert.equal(response.body.success, false);
     }
 });
+
+test("AI planner treats an empty or whitespace-only API key as unconfigured", async () => {
+    process.env.GROQ_API_KEY = " ";
+    globalThis.fetch = async () => {
+        throw new Error("AI must not be called without a configured key");
+    };
+
+    const response = makeResponse();
+    await planTask({ body: { description: "Prepare for launch" } }, response);
+    assert.equal(response.statusCode, 500);
+    assert.equal(response.body.success, false);
+});

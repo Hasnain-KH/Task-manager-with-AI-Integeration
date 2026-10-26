@@ -1,7 +1,10 @@
 import { MongoMemoryServer } from "mongodb-memory-server";
 import { spawn } from "child_process";
+import { createServer } from "node:http";
+import { readFile } from "node:fs/promises";
+import mongoose from "mongoose";
 
-const BASE = "http://localhost:5000";
+let BASE;
 let passed = 0;
 let failed = 0;
 let createdId = null;
@@ -18,6 +21,17 @@ const check = (name, condition, detail) => {
 
 const req = async (method, path, body) => {
     const res = await fetch(`${BASE}${path}`, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: body === undefined ? undefined : JSON.stringify(body)
+    });
+    let json = null;
+    try { json = await res.json(); } catch { /* non-json */ }
+    return { status: res.status, json };
+};
+
+const reqAt = async (base, method, path, body) => {
+    const res = await fetch(`${base}${path}`, {
         method,
         headers: { "Content-Type": "application/json" },
         body: body === undefined ? undefined : JSON.stringify(body)
@@ -53,9 +67,14 @@ const waitForServer = async () => {
 
 const main = () => {
     let child = null;
+    let serverlessServer = null;
 
     const exit = async (code) => {
         if (child) child.kill();
+        if (serverlessServer) {
+            await new Promise((resolve) => serverlessServer.close(resolve));
+        }
+        await mongoose.disconnect();
         if (globalThis.mongod) await globalThis.mongod.stop();
         process.exit(code);
     };
@@ -66,9 +85,68 @@ const main = () => {
         const uri = globalThis.mongod.getUri();
         console.log(`In-memory MongoDB ready at ${uri.replace(/\/\/.*@/, "//***@")}`);
 
+        process.env.MONGO_URI = uri;
+        process.env.GROQ_API_KEY = " ";
+        const { default: serverlessHandler } = await import("./api/index.js");
+        serverlessServer = createServer((req, res) => {
+            serverlessHandler(req, res).catch((err) => {
+                console.error("Serverless handler test failed:", err);
+                res.statusCode = 500;
+                res.end(JSON.stringify({ success: false }));
+            });
+        });
+        await new Promise((resolve, reject) => {
+            serverlessServer.once("error", reject);
+            serverlessServer.listen(0, "127.0.0.1", resolve);
+        });
+        const serverlessBase = `http://127.0.0.1:${serverlessServer.address().port}`;
+        const vercelConfig = JSON.parse(await readFile(new URL("./vercel.json", import.meta.url), "utf8"));
+        check("Vercel config rewrites /api and nested API paths",
+            vercelConfig.rewrites?.some((rewrite) => rewrite.source === "/api" && rewrite.destination === "/api/index.js") &&
+            vercelConfig.rewrites?.some((rewrite) => rewrite.source === "/api/:path*" && rewrite.destination === "/api/index.js"));
+
+        const [health, taskList] = await Promise.all([
+            reqAt(serverlessBase, "GET", "/api"),
+            reqAt(serverlessBase, "GET", "/api/tasks")
+        ]);
+        check("Serverless entry point connects to MongoDB and serves /api",
+            health.status === 200 && health.json?.success === true,
+            `status=${health.status}`);
+        check("Serverless entry point serves nested task routes",
+            taskList.status === 200 && Array.isArray(taskList.json?.data),
+            `status=${taskList.status}`);
+
+        let serverlessTask = await reqAt(serverlessBase, "POST", "/api/tasks", {
+            title: "Serverless handler smoke test"
+        });
+        const serverlessTaskId = serverlessTask.json?.data?._id;
+        check("Serverless entry point supports task creation",
+            serverlessTask.status === 201 && Boolean(serverlessTaskId),
+            `status=${serverlessTask.status}`);
+        if (serverlessTaskId) {
+            serverlessTask = await reqAt(serverlessBase, "DELETE", `/api/tasks/${serverlessTaskId}`);
+            check("Serverless entry point supports task deletion",
+                serverlessTask.status === 200,
+                `status=${serverlessTask.status}`);
+        }
+
+        const serverlessAi = await reqAt(serverlessBase, "POST", "/api/ai/plan-task", { description: "" });
+        check("Serverless entry point preserves the AI planner route",
+            serverlessAi.status === 400 && serverlessAi.json?.success === false,
+            `status=${serverlessAi.status}`);
+
+        const portProbe = createServer();
+        await new Promise((resolve, reject) => {
+            portProbe.once("error", reject);
+            portProbe.listen(0, "127.0.0.1", resolve);
+        });
+        const testPort = portProbe.address().port;
+        await new Promise((resolve) => portProbe.close(resolve));
+        BASE = `http://127.0.0.1:${testPort}`;
+
         console.log("Starting API server...");
         child = spawn("node", ["server.js"], {
-            env: { ...process.env, MONGO_URI: uri, GROQ_API_KEY: "", PORT: "5000" },
+            env: { ...process.env, MONGO_URI: uri, GROQ_API_KEY: " ", PORT: String(testPort) },
             stdio: ["ignore", "pipe", "pipe"]
         });
         child.stdout.on("data", (d) => process.stdout.write(`[server] ${d}`));

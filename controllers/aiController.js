@@ -57,7 +57,7 @@ export const planTask = async (req, res) => {
         });
     }
 
-    if (!process.env.GROQ_API_KEY) {
+    if (!process.env.GROQ_API_KEY?.trim()) {
         return res.status(500).json({
             success: false,
             message: "AI planning is not configured on the server"
