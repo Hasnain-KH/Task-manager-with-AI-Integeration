@@ -22,10 +22,13 @@ Rules:
 
 const isValidPlan = (plan) => {
     if (!plan || typeof plan !== "object" || Array.isArray(plan)) return false;
+    const requiredKeys = ["summary", "priority", "estimatedHours", "steps"];
+    if (Object.keys(plan).length !== requiredKeys.length ||
+        Object.keys(plan).some((key) => !requiredKeys.includes(key))) return false;
     if (typeof plan.summary !== "string" || !plan.summary.trim()) return false;
     if (!["low", "medium", "high"].includes(plan.priority)) return false;
     if (typeof plan.estimatedHours !== "number" || !Number.isFinite(plan.estimatedHours) || plan.estimatedHours <= 0) return false;
-    if (!Array.isArray(plan.steps) || plan.steps.length === 0) return false;
+    if (!Array.isArray(plan.steps) || plan.steps.length < 2 || plan.steps.length > 6) return false;
     if (!plan.steps.every((step) => typeof step === "string" && step.trim())) return false;
     return true;
 };
@@ -47,10 +50,17 @@ export const planTask = async (req, res) => {
         });
     }
 
+    if (description.trim().length > 5_000) {
+        return res.status(400).json({
+            success: false,
+            message: "Task description must be 5000 characters or fewer"
+        });
+    }
+
     if (!process.env.GROQ_API_KEY) {
         return res.status(500).json({
             success: false,
-            message: "GROQ_API_KEY is not configured on the server"
+            message: "AI planning is not configured on the server"
         });
     }
 

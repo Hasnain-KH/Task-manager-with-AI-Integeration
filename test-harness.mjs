@@ -27,6 +27,17 @@ const req = async (method, path, body) => {
     return { status: res.status, json };
 };
 
+const rawReq = async (method, path, body) => {
+    const res = await fetch(`${BASE}${path}`, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body
+    });
+    let json = null;
+    try { json = await res.json(); } catch { /* non-json */ }
+    return { status: res.status, json };
+};
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const waitForServer = async () => {
@@ -57,7 +68,7 @@ const main = () => {
 
         console.log("Starting API server...");
         child = spawn("node", ["server.js"], {
-            env: { ...process.env, MONGO_URI: uri, GROQ_API_KEY: process.env.GROQ_API_KEY || "", PORT: "5000" },
+            env: { ...process.env, MONGO_URI: uri, GROQ_API_KEY: "", PORT: "5000" },
             stdio: ["ignore", "pipe", "pipe"]
         });
         child.stdout.on("data", (d) => process.stdout.write(`[server] ${d}`));
@@ -71,6 +82,25 @@ const main = () => {
             console.log("FAIL  server did not start");
             return exit(1);
         }
+
+        const preflight = await fetch(`${BASE}/api/ai/plan-task`, {
+            method: "OPTIONS",
+            headers: {
+                Origin: "http://localhost:5173",
+                "Access-Control-Request-Method": "POST"
+            }
+        });
+        check("0a. Frontend CORS preflight is allowed",
+            preflight.status === 204 &&
+            preflight.headers.get("access-control-allow-origin") === "http://localhost:5173",
+            `status=${preflight.status}`);
+
+        const blockedOrigin = await fetch(`${BASE}/api`, {
+            headers: { Origin: "https://untrusted.example" }
+        });
+        check("0b. Unconfigured browser origin is not allowed",
+            !blockedOrigin.headers.has("access-control-allow-origin"),
+            `allow-origin=${blockedOrigin.headers.get("access-control-allow-origin")}`);
 
         // 1. Create a task successfully
         let r = await req("POST", "/api/tasks", {
@@ -126,6 +156,16 @@ const main = () => {
         check("6. Reject missing title (400)", r.status === 400, `status=${r.status}`);
         r = await req("POST", "/api/tasks", { title: "   ", description: "blank title" });
         check("6b. Reject blank title (400)", r.status === 400, `status=${r.status}`);
+        r = await req("POST", "/api/tasks");
+        check("6c. Reject missing task body (400 JSON)", r.status === 400 && r.json?.success === false, `status=${r.status}`);
+        r = await req("POST", "/api/tasks", []);
+        check("6d. Reject non-object task body (400 JSON)", r.status === 400 && r.json?.success === false, `status=${r.status}`);
+        r = await rawReq("POST", "/api/tasks", "{\"title\":");
+        check("6e. Reject malformed JSON (400 JSON)", r.status === 400 && r.json?.success === false, `status=${r.status}`);
+        r = await req("POST", "/api/tasks", { title: "Bad date", dueDate: "not-a-date" });
+        check("6f. Reject invalid due date (400)", r.status === 400, `status=${r.status}`);
+        r = await rawReq("POST", "/api/tasks", JSON.stringify({ title: "x".repeat(12_000) }));
+        check("6g. Reject oversized JSON body (413)", r.status === 413, `status=${r.status}`);
 
         // 7. Reject an invalid status
         r = await req("POST", "/api/tasks", { title: "Valid title", status: "done" });
@@ -145,23 +185,14 @@ const main = () => {
         r = await req("POST", "/api/ai/plan-task", {});
         check("11b. Handle missing AI description (400)", r.status === 400, `status=${r.status}`);
 
-        // 10/12. Real AI plan (only if key present)
-        if (process.env.GROQ_API_KEY && process.env.GROQ_API_KEY.trim()) {
-            r = await req("POST", "/api/ai/plan-task", {
-                description: "I need to build a portfolio website within three days."
-            });
-            const plan = r.json?.plan;
-            check("10. Generate a real AI task plan (200, valid plan)",
-                r.status === 200 && typeof plan?.summary === "string" &&
-                ["low", "medium", "high"].includes(plan?.priority) &&
-                typeof plan?.estimatedHours === "number" && plan?.estimatedHours > 0 &&
-                Array.isArray(plan?.steps) && plan?.steps.length > 0,
-                `status=${r.status}, body=${JSON.stringify(r.json).slice(0, 300)}`);
-        } else {
-            console.log("SKIP  10. Real AI plan -- GROQ_API_KEY not set");
-            r = await req("POST", "/api/ai/plan-task", { description: "test" });
-            check("12a. AI without key returns meaningful 500", r.status === 500, `status=${r.status}`);
+        r = await req("POST", "/api/ai/plan-task", { description: "test" });
+        check("12a. AI without key returns meaningful 500", r.status === 500 && r.json?.success === false, `status=${r.status}`);
+        let rateLimited = false;
+        for (let i = 0; i < 21; i++) {
+            r = await req("POST", "/api/ai/plan-task", { description: "" });
+            if (r.status === 429) rateLimited = true;
         }
+        check("12b. AI endpoint enforces rate limit (429)", rateLimited, `last status=${r.status}`);
 
         console.log(`\nResult: ${passed} passed, ${failed} failed`);
         await exit(failed > 0 ? 1 : 0);

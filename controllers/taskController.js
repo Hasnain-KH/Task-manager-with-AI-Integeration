@@ -1,9 +1,13 @@
 import mongoose from "mongoose";
 import Task from "../models/Task.js";
 
-const isValidId = (id) => mongoose.isValidObjectId(id);
+const isValidId = (id) => mongoose.isObjectIdOrHexString(id);
 
 const validateTaskFields = (body, { requireTitle }) => {
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+        return "Request body must be a JSON object";
+    }
+
     const { title, description, status, dueDate } = body;
 
     if (requireTitle) {
@@ -66,6 +70,7 @@ export const createTask = async (req, res) => {
                 message: Object.values(err.errors).map((e) => e.message).join(", ")
             });
         }
+        console.error("Failed to create task:", err.name);
         return res.status(500).json({ success: false, message: "Server error while creating task" });
     }
 };
@@ -81,6 +86,7 @@ export const getTasks = async (req, res) => {
             data: tasks
         });
     } catch (err) {
+        console.error("Failed to fetch tasks:", err.name);
         return res.status(500).json({ success: false, message: "Server error while fetching tasks" });
     }
 };
@@ -106,6 +112,7 @@ export const getTaskById = async (req, res) => {
             data: task
         });
     } catch (err) {
+        console.error("Failed to fetch task:", err.name);
         return res.status(500).json({ success: false, message: "Server error while fetching task" });
     }
 };
@@ -134,7 +141,7 @@ export const updateTask = async (req, res) => {
                 status: status ?? "pending",
                 dueDate: dueDate || null
             },
-            { new: true, runValidators: true }
+            { returnDocument: "after", runValidators: true }
         );
 
         if (!task) {
@@ -153,6 +160,7 @@ export const updateTask = async (req, res) => {
                 message: Object.values(err.errors).map((e) => e.message).join(", ")
             });
         }
+        console.error("Failed to update task:", err.name);
         return res.status(500).json({ success: false, message: "Server error while updating task" });
     }
 };
@@ -178,6 +186,7 @@ export const deleteTask = async (req, res) => {
             data: task
         });
     } catch (err) {
+        console.error("Failed to delete task:", err.name);
         return res.status(500).json({ success: false, message: "Server error while deleting task" });
     }
 };
